@@ -4,6 +4,7 @@ project (PE-bear)
 # Offer the user the choice of overriding the installation directories
 set(INSTALL_LIB_DIR lib CACHE PATH "Installation directory for libraries")
 set(INSTALL_BIN_DIR bin CACHE PATH "Installation directory for executables")
+set(COMMIT_HASH "" CACHE STRING "Commit Hash")
 
 message(STATUS "sigfind_dir='${SIGFIND_DIR}'")
 message(STATUS "sigfind_lib='${SIGFIND_LIB}'")
@@ -249,13 +250,14 @@ IF (WIN32)
 	ENDIF()
 ENDIF()
 
+add_definitions(-DCOMMIT_HASH=${COMMIT_HASH})
 
 IF (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	set(MACOSX TRUE)
 ENDIF()
 
 IF(MACOSX)
-	add_executable (${PROJECT_NAME} MACOSX_BUNDLE REbear.rc ${pebear_hdrs} ${pebear_srcs} ${pebear_hdrs_moc} ${pebear_rcc_src} )
+	add_executable (${PROJECT_NAME} MACOSX_BUNDLE resources.rc ${pebear_hdrs} ${pebear_srcs} ${pebear_hdrs_moc} ${pebear_rcc_src} )
 
 	set_target_properties(${PROJECT_NAME} PROPERTIES
 	    BUNDLE True
@@ -266,7 +268,7 @@ IF(MACOSX)
 	    #MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/customtemplate.plist.in
 	)
 ELSE()
-	add_executable (${PROJECT_NAME} REbear.rc ${pebear_hdrs} ${pebear_srcs} ${pebear_hdrs_moc} ${pebear_rcc_src} )
+	add_executable (${PROJECT_NAME} resources.rc ${pebear_hdrs} ${pebear_srcs} ${pebear_hdrs_moc} ${pebear_rcc_src} )
 ENDIF()
 
 target_link_libraries( ${PROJECT_NAME} ${SIGFIND_LIB} ${PARSER_LIB} )

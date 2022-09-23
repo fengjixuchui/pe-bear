@@ -1,5 +1,6 @@
 #pragma once
 #include <QtGlobal>
+#include <vector>
 
 #if QT_VERSION >= 0x050000
 	#include <QtWidgets>
@@ -28,30 +29,91 @@ public:
 	bufsize_t getUnitSize(bool isRaw);
 	size_t getUnitsNum(bool isRaw);
 
-	size_t unitsOfSection(int index, bool isRaw);
-	double percentFilledInSection(int index, bool isRaw);
+	size_t unitsOfSection(int index, bool isRaw, bool showMapped);
+	double percentFilledInSection(int index, bool isRaw, bool showMapped);
 	
 	double unitOfEntryPoint(bool isRaw);
 	double unitOfHeadersEnd(bool isRaw);
 	double unitOfSectionBegin(int index, bool isRaw);
 	DWORD getSectionBegin(int index, bool isRaw);
-	double unitOfAddress(uint32_t address, bool isRaw);
+	double unitOfAddress(offset_t address, bool isRaw);
 
 	DWORD getEntryPoint(bool isRaw);
 
 	QString nameOfSection(int index);
 	int secIndexAtUnit(int unitNum, bool isRaw);
 
-	void selectFromAddress(uint32_t offset);
+	void selectFromAddress(offset_t offset);
 	SectionHdrWrapper* getSectionAtUnit(int unitNum, bool isRaw);
 
 protected:
-	DWORD selectedStart, selectedEnd;
+	offset_t selectedStart, selectedEnd;
 friend class SelectableSecDiagram;
+};
+//--------------------------------------------------------------------------------------
+
+class SectionsDiagramSettings : public QObject
+{
+	Q_OBJECT
+
+signals:
+	void settingsUpdated();
+
+public:
+	SectionsDiagramSettings(bool _isRaw, QObject *parent)
+		: QObject(parent),
+		isRaw(_isRaw),
+		showMapped(true),
+		isGridEnabled(false), isDrawEPEnabled(true), isDrawSecHdrsEnabled(true), isDrawOffsets(true), isDrawSecNames(true),
+		isDrawSelected(false)
+	{
+		loadDefaultColors();
+
+		bgColor = QColor(DIAGRAM_BG);
+		selectionColor = QColor(DIAGRAM_BG);
+		selectionColor.setAlpha(150);
+	}
+
+public slots:
+	void setEnableGrid(bool enable) { isGridEnabled = enable; refreshParent(); }
+	void setDrawEP(bool enable) { isDrawEPEnabled = enable; refreshParent(); }
+	void setDrawSecHdrs(bool enable) { isDrawSecHdrsEnabled = enable; refreshParent(); }
+	void setDrawOffsets(bool enable) { isDrawOffsets = enable;  refreshParent(); }
+	void setDrawSecNames(bool enable) { isDrawSecNames = enable; refreshParent(); }
+	void setShowMapped(bool enable) { showMapped = enable; refreshParent(); }
+
+protected:
+	void loadDefaultColors()
+	{
+		colors.push_back(QColor(0, 0, 255, 100));
+		colors.push_back(QColor(255, 255, 0, 100));
+		colors.push_back(QColor(25, 255, 0, 100));
+		colors.push_back(QColor(255, 34, 0, 100));
+		colors.push_back(QColor(200, 0, 255, 100));
+	}
+
+	void refreshParent()
+	{
+		emit settingsUpdated();
+	}
+
+	bool isRaw;
+	bool showMapped;
+	bool isGridEnabled;
+	bool isDrawEPEnabled;
+	bool isDrawSecHdrsEnabled;
+	bool isDrawOffsets;
+	bool isDrawSecNames;
+	bool isDrawSelected;
+
+	std::vector<QColor> colors;
+	QColor bgColor, selectionColor;
+
+	friend class SectionsDiagram;
+	friend class SelectableSecDiagram;
 };
 
 //--------------------------------------------------------------------------------------
-
 class SectionsDiagram : public QMainWindow
 {
 	Q_OBJECT
@@ -65,15 +127,8 @@ public:
 	void setBackgroundColor(QColor bgColor);
 	
 	QColor contourColor;
-	bool isDrawSelected;
 
 public slots:
-	void setEnableGrid(bool enable) { isGridEnabled = enable; refreshPixmap(); }
-	void setDrawEP(bool enable) { isDrawEPEnabled = enable; refreshPixmap(); }
-	void setDrawSecHdrs(bool enable) { isDrawSecHdrsEnabled = enable; refreshPixmap(); }
-	void setDrawOffsets(bool enable) { isDrawOffsets = enable; this->setMinimumWidth(minimumSizeHint().width()); refreshPixmap(); }
-	void setDrawSecNames(bool enable) { isDrawSecNames = enable; this->setMinimumWidth(minimumSizeHint().width()); refreshPixmap(); }
-
 	void showMenu(QPoint p);
 	void refreshPixmap();
 
@@ -94,16 +149,15 @@ protected:
 
 	int unitAtPosY(int y);
 
+	QAction *dataViewAction;
 	QAction *enableGridAction, *enableDrawEPAction, *enableDrawSecHdrsAction;
 	QAction *enableOffsetsAction, *enableSecNamesAction;
 	QMenu menu;
 
 	SecDiagramModel *myModel;
 	QPixmap pixmap;
-	QColor bgColor, selectionColor;
 	int curZoom;
-	bool isGridEnabled;
-	bool isDrawEPEnabled, isDrawSecHdrsEnabled, isDrawOffsets, isDrawSecNames;
+	SectionsDiagramSettings settings;
 	bool isRaw;
 
 	int selY1, selY2;
