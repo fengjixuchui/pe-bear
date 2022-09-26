@@ -10,6 +10,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <iostream>
+#include <fstream>
+
 #include "SigNode.h"
 #include "PckrSign.h"
 
@@ -18,7 +21,7 @@ namespace sig_ma {
 
 struct matched {
 	std::set<PckrSign*> signs;
-	long match_offset;
+	uint64_t match_offset;
 };
 //------------------
 
@@ -29,12 +32,12 @@ public:
 	~SigTree() { clear(); }
 
 	bool addPckrSign(PckrSign *sign);
-	long loadFromFile(FILE* f);
+	size_t loadFromFile(std::ifstream& input);
 
-	matched getMatching(char *buf, size_t buf_len, bool skipNOPs);
+	matched getMatching(uint8_t *buf, size_t buf_len, bool skipNOPs);
 
-	long getMinLen() { return min_siglen; }
-	long getMaxLen() { return max_siglen; }
+	size_t getMinLen() { return min_siglen; }
+	size_t getMaxLen() { return max_siglen; }
 
 protected:
 	void insertPckrSign(PckrSign* sign);
@@ -45,8 +48,8 @@ protected:
 	std::vector<PckrSign*> signaturesVec;
 	SigNode root;
 	
-	long min_siglen;
-	long max_siglen;
+	size_t min_siglen;
+	size_t max_siglen;
 
 private:
 	void clear(); //destroys all the signatures!

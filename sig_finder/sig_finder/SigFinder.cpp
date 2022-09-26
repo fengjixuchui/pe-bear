@@ -1,20 +1,27 @@
 #include "SigFinder.h"
 
+#include <iostream>
+#include <fstream>
+
 using namespace sig_ma;
+
 //----------------------------------------------------
 
-int SigFinder::loadSignatures(std::string fname)
+/* read file with signatures */
+size_t SigFinder::loadSignatures(const std::string &fname)
 {
-	/* read file with signatures */
-	FILE* f = fopen(fname.c_str(), "r");
-	if (!f) return 0;
-	int num = tree.loadFromFile(f);
-	fclose(f);
+	std::ifstream input;
+	input.open(fname);
+	if (!input.is_open()) {
+		return 0;
+	}
+	size_t num = tree.loadFromFile(input);
+	input.close();
 	return num;
 }
 
 
-PckrSign* SigFinder::getFirstMatch(char *buf, long buf_size, long start_offset, match_direction md)
+PckrSign* SigFinder::getFirstMatch(uint8_t *buf, long buf_size, long start_offset, match_direction md)
 {
 	matched mtchd = getMatching(buf, buf_size, start_offset, md);
 	if (mtchd.signs.size() == 0) return NULL;
@@ -23,11 +30,11 @@ PckrSign* SigFinder::getFirstMatch(char *buf, long buf_size, long start_offset, 
 	return sign;
 }
 
-matched SigFinder::getMatching(char *buf, long buf_size, long start_offset, match_direction md)
+matched SigFinder::getMatching(uint8_t *buf, long buf_size, long start_offset, match_direction md)
 {
 	long srch_size = buf_size - start_offset;
-	char* srch_bgn = buf + start_offset;
-	long min_sig_len = tree.getMinLen();
+	uint8_t* srch_bgn = buf + start_offset;
+	size_t min_sig_len = tree.getMinLen();
 	
 	matched matched;
 	matched.match_offset = 0;

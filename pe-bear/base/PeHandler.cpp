@@ -10,7 +10,7 @@ using namespace pe;
 enum operation_ids { SIMPLE = 0, OP_ADD_SECTION = 1 };
 
 
-CalcThread::CalcThread(CalcThread::hash_type hType, PEFile* pe, uint64_t checksumOffset)
+CalcThread::CalcThread(CalcThread::hash_type hType, PEFile* pe, offset_t checksumOffset)
 	: m_PE(pe), hashType(hType), checksumOff(checksumOffset)
 {
 }
@@ -181,14 +181,14 @@ void PeHandler::calculateHash(CalcThread::hash_type type)
 		return; //previous thread didn't finished
 	}
 	const char* content = (char*) m_PE->getContent();
-	int size = m_PE->getRawSize();
+	const offset_t size = m_PE->getRawSize();
+	const bool isSizeAcceptable = (offset_t(int(size)) == size) ? true : false;
 
-	if ((int64_t) size != m_PE->getRawSize() || size < 0) {
+	if (!content || !size || !isSizeAcceptable || m_PE->isTruncated()) {
 		hash[type] = "Cannot calculate!";
 	} else {
 		hash[type] = "Calculating...";
-		uint64_t checksumOffset = this->optHdrWrapper.getFieldOffset(OptHdrWrapper::CHECKSUM);
-		
+		offset_t checksumOffset = this->optHdrWrapper.getFieldOffset(OptHdrWrapper::CHECKSUM);
 		this->calcThread[type] = new CalcThread(type, m_PE, checksumOffset);
 		QObject::connect(calcThread[type], SIGNAL(gotHash(QString, int)), this, SLOT(onHashReady(QString, int)));
 		QObject::connect(calcThread[type], SIGNAL(finished()), this, SLOT(onCalcThreadFinished()));
@@ -218,7 +218,7 @@ PckrSign* PeHandler::findPackerSign(offset_t startAddr, Executable::addr_type aT
 	offset_t startingRaw = m_PE->toRaw(startAddr, aT);
 	if (startingRaw == INVALID_ADDR) return NULL;
 
-	sig_ma::matched matchedSet = signFinder->getMatching((char*)content, contentSize, startingRaw, md);
+	sig_ma::matched matchedSet = signFinder->getMatching(content, contentSize, startingRaw, md);
 	int foundCount = matchedSet.signs.size();
 	if (foundCount == 0) return NULL;
 
@@ -249,19 +249,19 @@ PckrSign* PeHandler::findPackerInArea(offset_t rawOff, size_t areaSize, sig_ma::
 	BYTE *content = NULL;
 
 	bool isDeepSearch = false;
-	uint32_t foundOffset = 0;
+	offset_t foundOffset = 0;
 	PckrSign* packer = NULL;
 	int foundCount = 0;
 
 	for (size_t step = 0; step < areaSize; step++) {
 
 		size_t size = areaSize - step;
-		content = (BYTE*) m_PE->getContentAt(rawOff + step, Executable::RAW, size);
+		content = m_PE->getContentAt(rawOff + step, Executable::RAW, size);
 		if (content == NULL) {
 			//printf("content is NULL\n");
 			break;
 		}
-		sig_ma::matched matchedSet = signFinder->getMatching((char*) content, size, 0, md);
+		sig_ma::matched matchedSet = signFinder->getMatching(content, size, 0, md);
 		
 		foundCount += matchedSet.signs.size();
 		if (matchedSet.signs.size() == 0) break;
@@ -362,12 +362,16 @@ void PeHandler::advanceOffset(int increment)
 
 	if (increment < 0) {
 		increment *= (-1);
-		if (increment > page) page = 0;
-		else page -= increment;
+		if (increment > page) 
+			page = 0;
+		else 
+			page -= increment;
 	} else {
 		offset_t max = m_PE->getRawSize();
-		if (page + increment > max) page = max;
-		else page += increment;
+		if (page + increment > max) 
+			page = max;
+		else 
+			page += increment;
 	}
 
 	setPageOffset(page);
@@ -383,7 +387,7 @@ bool PeHandler::setDisplayedEP()
 	offset_t epOff = 0;
 	try {
 		epOff = m_PE->rvaToRaw(epRVA);
-	} catch (CustomException e) {
+	} catch (CustomException &e) {
 		isOk = false;
 	}
 	if (!isOk) return false;
@@ -516,7 +520,7 @@ offset_t PeHandler::loadSectionContent(SectionHdrWrapper* sec, QFile &fIn, bool 
 	backupModification(modifOffset, modifSize, continueLastOperation);
 
 	AbstractByteBuffer *buf = m_PE->getFileBuffer();
-	if (buf) return 0;
+	if (!buf) return 0;
 
 	offset_t loaded = buf->substFragmentByFile(modifOffset, modifSize, fIn);
 

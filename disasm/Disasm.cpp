@@ -22,7 +22,7 @@ void pe_bear::resetCond(cond_buf &buf)
 
 Disasm::Disasm() 
 	: is_init(false), m_buf(NULL), m_bufSize(0),
-	startOffset(0), m_offset(0),
+	startOffset(0), m_offset(0), m_disasmSize(0),
 	m_iptr(0)
 {
 }
@@ -66,6 +66,9 @@ QString Disasm::printBytes(const uint8_t* buf, const size_t size)
 
 offset_t Disasm::getJmpDestAddr(offset_t currVA, int instrLen, int lVal) const
 {
+	if (currVA == INVALID_ADDR) {
+		return INVALID_ADDR;
+	}
 	int delta = instrLen + lVal;
 	const offset_t addr = (offset_t)((int64_t)currVA + (int64_t)delta);
 	return addr;
