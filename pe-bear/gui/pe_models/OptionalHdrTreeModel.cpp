@@ -161,7 +161,6 @@ bool DataDirTreeItem::setDataValue(int column, const QVariant &value)
 
 QVariant DataDirTreeItem::toolTip(int column) const
 {
-	int fieldIndx = column;
 	if (m_PE == NULL) return QVariant();
 
 	if (this->level == DESC) return QVariant();
@@ -443,7 +442,6 @@ QVariant OptionalHdrTreeModel::data(const QModelIndex &index, int role) const
 	if (!index.isValid()) return QVariant();
 	if (role == Qt::ForegroundRole) {
 		int fId = getFID(index);
-		Executable::addr_type aType = this->wrapperAt(index)->containsAddrType(fId);
 		return this->addrColor(index);
 	}
 	if (role == Qt::ToolTipRole) return toolTip(index);
