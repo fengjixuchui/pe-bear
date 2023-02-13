@@ -5,7 +5,7 @@
 
 struct ImportsAutoadderSettings
 {
-	ImportsAutoadderSettings() : addNewSec(false) {}
+	ImportsAutoadderSettings() : addNewSec(false), separateOFT(false) {}
 	
 	bool addImport(const QString &dll, const QString &func)
 	{
@@ -37,7 +37,7 @@ struct ImportsAutoadderSettings
 		size_t areaSize = 0;
 		for (auto itr = dllFunctions.begin(); itr != dllFunctions.end(); ++itr) {
 			const QString dllName = itr.key();
-			areaSize += dllName.length() + 1;
+			areaSize += (dllName.length() + 1);
 		}
 		return areaSize;
 	}
@@ -49,7 +49,7 @@ struct ImportsAutoadderSettings
 			const QStringList funcs = dItr.value();
 			for (auto fItr = funcs.begin(); fItr != funcs.end(); ++fItr) {
 				const QString func = *fItr;
-				areaSize += func.length() + 1;
+				areaSize += (func.length() + 1);
 			}
 		}
 		return areaSize;
@@ -60,11 +60,12 @@ struct ImportsAutoadderSettings
 		size_t thunksNeeded = 0;
 		for (auto dItr = dllFunctions.begin(); dItr != dllFunctions.end(); ++dItr) {
 			const QStringList funcs = dItr.value();
-			thunksNeeded = funcs.size() + 1; // records for all the functions, plus the terminator
+			thunksNeeded += (funcs.size() + 1); // records for all the functions, plus the terminator
 		}
 		return thunksNeeded;
 	}
 	
 	bool addNewSec;
+	bool separateOFT; //< separate Original First Thunk from First Thunk
 	QMap<QString, QStringList> dllFunctions;
 };

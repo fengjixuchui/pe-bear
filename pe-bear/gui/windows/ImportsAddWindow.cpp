@@ -2,7 +2,8 @@
 
 ImportsAddWindow::ImportsAddWindow(ImportsAutoadderSettings& _settings, QWidget *parent)
 	: QDialog(parent, Qt::Dialog), settings(_settings),
-	tableModel(NULL)
+	funcNameValidator(NULL),
+	tableModel(NULL), ui_elementsView(NULL)
 {
 	setWindowFlags(Qt::Dialog);
 	setModal(true);
@@ -13,6 +14,13 @@ ImportsAddWindow::ImportsAddWindow(ImportsAutoadderSettings& _settings, QWidget 
 	propertyLayout5.addWidget(&addSecLabel);
 	propertyLayout5.addWidget(&addSecCBox);
 	addSecCBox.setChecked(settings.addNewSec);
+
+	separateOFTLabel.setText(tr("Separate Original First Thunk:"));
+	separateOFTLabel.setBuddy(&separateOFTBox);
+
+	propertyLayout6.addWidget(&separateOFTLabel);
+	propertyLayout6.addWidget(&separateOFTBox);
+	separateOFTBox.setChecked(settings.separateOFT);
 
 	propertyLayout0.addWidget(new QLabel("Insert / remove a record:", this));
 
@@ -27,6 +35,10 @@ ImportsAddWindow::ImportsAddWindow(ImportsAutoadderSettings& _settings, QWidget 
 
 	propertyLayout1.addWidget(&funcNameLabel);
 	propertyLayout2.addWidget(&funcNameEdit);
+
+	funcNameValidator = new QRegExpValidator(QRegExp("[0-9A-Za-z._#@?-]{1,}"));
+	funcNameEdit.setValidator(funcNameValidator);
+	funcNameEdit.setToolTip("A function name, or ordinal prefixed by '#', i.e. #123");
 	
 	topLayout.addLayout(&propertyLayout0);
 	topLayout.addLayout(&propertyLayout1);
@@ -66,6 +78,7 @@ ImportsAddWindow::ImportsAddWindow(ImportsAutoadderSettings& _settings, QWidget 
 
 	buttonLayout2.addWidget(&okButton);
 	buttonLayout2.addWidget(&cancelButton);
+	topLayout.addLayout(&propertyLayout6);
 	topLayout.addLayout(&propertyLayout5);
 	topLayout.addLayout(&buttonLayout2);
 
@@ -104,6 +117,7 @@ void ImportsAddWindow::onTableSelectionChanged(const QItemSelection &selected)
 void ImportsAddWindow::onSaveClicked()
 {
 	settings.addNewSec = addSecCBox.isChecked();
+	settings.separateOFT = separateOFTBox.isChecked();
 	accept();
 }
 

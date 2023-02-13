@@ -150,7 +150,10 @@ protected:
 		propertyLayout2,
 		propertyLayout3,
 		propertyLayout4,
-		propertyLayout5;
+		propertyLayout5,
+		propertyLayout6;
+
+	QRegExpValidator *funcNameValidator;
 
 	QHBoxLayout buttonLayout1;
 	QHBoxLayout buttonLayout2;
@@ -164,9 +167,9 @@ protected:
 	QPushButton addButton, removeButton,
 		okButton, cancelButton;
 
-	QLabel addSecLabel;
-	QCheckBox addSecCBox;
-
+	QLabel addSecLabel, separateOFTLabel;
+	QCheckBox addSecCBox, separateOFTBox;
+	
 private:
 	ImpAdderSettingsTableModel *tableModel;
 	QTableView *ui_elementsView;

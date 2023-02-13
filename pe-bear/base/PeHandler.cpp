@@ -474,7 +474,6 @@ bool PeHandler::resizeImage(bufsize_t newSize)
 	offset_t modOffset = this->optHdrWrapper.getFieldOffset(OptHdrWrapper::IMAGE_SIZE);
 	bufsize_t modSize = this->optHdrWrapper.getFieldSize(OptHdrWrapper::IMAGE_SIZE);
 	this->modifHndl.backupModification(modOffset, modSize, false);
-
 	m_PE->setImageSize(newSize);
 	return true;
 }
@@ -496,6 +495,10 @@ SectionHdrWrapper* PeHandler::addSection(QString name, bufsize_t rSize, bufsize_
 	//---
 	SectionHdrWrapper* newSec = NULL;
 	try {
+		const bufsize_t roundedRawEnd = buf_util::roundupToUnit(m_PE->getMappedSize(Executable::RAW), m_PE->getAlignment(Executable::RAW));
+		const bufsize_t newSize = roundedRawEnd + rSize;
+		this->modifHndl.backupResize(newSize, true);
+		
 		newSec = m_PE->addNewSection(name, rSize, vSize);
 	} catch (CustomException e) {
 		this->modifHndl.unStoreLast();
@@ -558,7 +561,9 @@ bool PeHandler::_moveDataDirEntry(pe::dir_entry dirNum, offset_t targetRaw, bool
 		isOk = false;
 	}
 	if (!isOk) {
-		unbackupLastModification();
+		if (!continueLastOperation) {
+			unbackupLastModification(); // operation was not performed, so remove the backup
+		}
 		return false;
 	}
 	dataDirWrappers[dirNum]->wrap();
@@ -636,7 +641,7 @@ bool PeHandler::addImportLib(bool continueLastOperation)
 	return true;
 }
 
-ImportEntryWrapper* PeHandler::_autoAddLibrary(const QString &name, size_t importedFuncsCount, size_t expectedDllsCount, offset_t &storageOffset, bool continueLastOperation)
+ImportEntryWrapper* PeHandler::_autoAddLibrary(const QString &name, size_t importedFuncsCount, size_t expectedDllsCount, offset_t &storageOffset, bool separateOFT, bool continueLastOperation)
 {
 	ImportDirWrapper* imports = dynamic_cast<ImportDirWrapper*> (m_PE->getWrapper(PEFile::WR_DIR_ENTRY + pe::DIR_IMPORT));
 	if (!imports) return NULL;
@@ -653,19 +658,21 @@ ImportEntryWrapper* PeHandler::_autoAddLibrary(const QString &name, size_t impor
 	// get a new entry to be filled:
 	ImportEntryWrapper* libWr = dynamic_cast<ImportEntryWrapper*> (imports->addEntry(NULL));
 	if (libWr == NULL) {
-		this->unbackupLastModification();
+		this->unModify();
 		throw CustomException("Failed to add a DLL entry!");
 		return NULL;
 	}
 	// search for a sufficient space for name and thunks:
 	offset_t nameOffset = storageOffset;
 	const size_t kThunkSize = _getThunkSize();
-	const size_t kNameRecordPadding = (kThunkSize * (importedFuncsCount + 1)) + 1; // leave space for X thunks + terminator + string '\0' terminator
-	const size_t nameTotalSize = name.length() + 1;
+	const size_t kThunkSeries = separateOFT ? 2 : 1;
+	const size_t kThunkSeriesSize = kThunkSize * (importedFuncsCount + 1); // leave space for X thunks + terminator
+	const size_t kNameRecordPadding = kThunkSeriesSize * kThunkSeries; 
+	const size_t nameTotalSize = name.length() + 1; // name + string '\0' terminator
 	while (true) {
 		BYTE *ptr = m_PE->getContentAt(nameOffset, nameTotalSize + kNameRecordPadding);
 		if (!ptr) {
-			this->unbackupLastModification();
+			this->unModify();
 			throw CustomException("Failed to get a free space to fill the entry!");
 			return NULL;
 		}
@@ -673,13 +680,12 @@ ImportEntryWrapper* PeHandler::_autoAddLibrary(const QString &name, size_t impor
 			nameOffset++; //move the pointer...
 			continue;
 		}
-		nameOffset += kNameRecordPadding; //leave the padding between the previous element and the current record
 		break;
 	}
 	// fill in the name
 	backupModification(nameOffset, nameTotalSize, true);
 	if (m_PE->setStringValue(nameOffset, name) == false) {
-		this->unbackupLastModification();
+		this->unModify();
 		throw CustomException("Failed to fill library name!");
 		return NULL;
 	}
@@ -688,9 +694,13 @@ ImportEntryWrapper* PeHandler::_autoAddLibrary(const QString &name, size_t impor
 	storageOffset = nameOffset + nameTotalSize;
 
 	// fill in the thunks lists pointers:
+	offset_t origFirstThunk = 0;
 	const offset_t firstThunk = m_PE->convertAddr(storageOffset, Executable::RAW, Executable::RVA);
+	if (separateOFT) {
+		origFirstThunk = m_PE->convertAddr((storageOffset + kThunkSeriesSize), Executable::RAW, Executable::RVA);
+	}
 	libWr->setNumValue(ImportEntryWrapper::FIRST_THUNK, firstThunk);
-	libWr->setNumValue(ImportEntryWrapper::ORIG_FIRST_THUNK, firstThunk);
+	libWr->setNumValue(ImportEntryWrapper::ORIG_FIRST_THUNK, origFirstThunk);
 	libWr->wrap();
 
 	// leave the space for a needed number of thunks:
@@ -710,12 +720,17 @@ bool PeHandler::_autoFillFunction(ImportEntryWrapper* libWr, ImportedFuncWrapper
 	if (m_PE == NULL || fWr == NULL) {
 		return false;
 	}
-	const offset_t thunkRVA = m_PE->convertAddr(storageOffset, Executable::RAW, Executable::RVA);
-	if (thunkRVA == INVALID_ADDR) {
-		return false;
-	}
+
 	backupModification(fWr->getOffset(), fWr->getSize(), true);
 	if (name.length()) {
+		if (!pe_util::validateFuncName(name.toStdString().c_str(), name.length())) {
+			this->unModify();
+			throw CustomException("Invalid function name supplied!");
+		}
+		const offset_t thunkRVA = m_PE->convertAddr(storageOffset, Executable::RAW, Executable::RVA);
+		if (thunkRVA == INVALID_ADDR) {
+			return false;
+		}
 		fWr->setNumValue(ImportedFuncWrapper::THUNK, thunkRVA);
 		fWr->setNumValue(ImportedFuncWrapper::ORIG_THUNK, thunkRVA);
 		fWr->setNumValue(ImportedFuncWrapper::HINT, ordinal);
@@ -724,14 +739,18 @@ bool PeHandler::_autoFillFunction(ImportEntryWrapper* libWr, ImportedFuncWrapper
 		const size_t nameTotalLen = name.length() + 1;
 		backupModification(storageOffset, nameTotalLen, true);
 		if (m_PE->setStringValue(storageOffset, name) == false) {
-			this->unbackupLastModification();
+			this->unModify();
 			throw CustomException("Failed to fill the function name");
 			return false;
 		}
 		storageOffset += nameTotalLen;
 		return true;
 	}
-	return false;
+	// import by ordinal:
+	const uint64_t ord_flag = m_PE->isBit32() ? ORDINAL_FLAG32 : ORDINAL_FLAG64;
+	fWr->setNumValue(ImportedFuncWrapper::THUNK, ordinal ^ ord_flag);
+	fWr->setNumValue(ImportedFuncWrapper::ORIG_THUNK, ordinal ^ ord_flag);
+	return true;
 }
 
 bool PeHandler::autoAddImports(const ImportsAutoadderSettings &settings)
@@ -743,22 +762,22 @@ bool PeHandler::autoAddImports(const ImportsAutoadderSettings &settings)
 	const size_t kDllRecordsSpace = sizeof(IMAGE_IMPORT_DESCRIPTOR) * (dllsCount + 1); // space for Import descriptor for each needed DLL
 	const bool shouldMoveTable = (canAddImportsLib(dllsCount)) ? false : true;
 	
-	size_t impDirSize = this->getDirSize(pe::DIR_IMPORT);
+	const size_t impDirSize = this->getDirSize(pe::DIR_IMPORT);
 	if (!impDirSize) {
 		throw CustomException("Import Directory does not exist");
 		return false;
 	}
-	
-	const size_t SEC_PADDING = 10;
-	//TODO: improve the calculations
-	const size_t stringsSize = settings.calcDllNamesSpace() + settings.calcFuncNamesSpace();
+	const size_t newImpDirSize = (shouldMoveTable) ? (impDirSize + kDllRecordsSpace) : 0;
 	const size_t thunksCount = settings.calcThunksCount();
-	const size_t thunksAreaSize = thunksCount * this->_getThunkSize() + thunksCount;
-	const size_t importRecords = thunksCount * sizeof(IMAGE_IMPORT_BY_NAME);
-	const size_t newImpDirSize = (shouldMoveTable) ? (impDirSize + kDllRecordsSpace) : kDllRecordsSpace;
-	size_t kNeededSize = newImpDirSize + stringsSize + thunksAreaSize + importRecords;
+	
+	const size_t thunksSeries = settings.separateOFT ? 2 : 1;
+	const size_t dllRecordsSize = settings.calcDllNamesSpace() + (thunksCount * this->_getThunkSize() * thunksSeries);
+	const size_t funcRecordsSize = settings.calcFuncNamesSpace() + (sizeof(WORD) * thunksCount);
+
+	const size_t SEC_PADDING = 10;
+	size_t kNeededSize = newImpDirSize + dllRecordsSize + funcRecordsSize;
 	if (!settings.addNewSec) kNeededSize += SEC_PADDING;
-	size_t newImpSize = pe_util::roundup(kNeededSize * 2, 0x200);
+	size_t newImpSize = kNeededSize;
 	
 	SectionHdrWrapper *stubHdr = NULL;
 	offset_t newImpOffset = INVALID_ADDR;
@@ -790,9 +809,9 @@ bool PeHandler::autoAddImports(const ImportsAutoadderSettings &settings)
 			backupModification(optHdr->getFieldOffset(OptHdrWrapper::IMAGE_SIZE), optHdr->getFieldSize(OptHdrWrapper::IMAGE_SIZE), continueLastOperation);
 		}
 		// do the operation:
+		this->modifHndl.backupResize(this->m_PE->getContentSize() + newImpSize, continueLastOperation);
 		stubHdr = m_PE->extendLastSection(newImpSize);
 		if (stubHdr == NULL) {
-			this->unbackupLastModification();
 			throw CustomException("Cannot extend the last section!");
 			return false;
 		}
@@ -808,12 +827,14 @@ bool PeHandler::autoAddImports(const ImportsAutoadderSettings &settings)
 		backupModification(stubHdr->getFieldOffset(SectionHdrWrapper::CHARACT), stubHdr->getFieldSize(SectionHdrWrapper::CHARACT), continueLastOperation);
 		continueLastOperation = true;
 		const DWORD oldCharact = stubHdr->getCharacteristics();
-		if (!stubHdr->setCharacteristics(oldCharact | 0xE0000000)) {
-			this->unbackupLastModification();
+		const DWORD requiredCharact = SCN_MEM_READ | SCN_MEM_WRITE;
+		if (!stubHdr->setCharacteristics(oldCharact | requiredCharact)) {
+			this->unModify();
 			throw CustomException("Cannot modify the section characteristics");
 			return false;
 		}
 		if (!this->_moveDataDirEntry(pe::DIR_IMPORT, newImpOffset, continueLastOperation)) {
+			this->unModify();
 			throw CustomException("Cannot move the data dir");
 			return false;
 		}
@@ -835,7 +856,7 @@ bool PeHandler::autoAddImports(const ImportsAutoadderSettings &settings)
 		const size_t funcCount = settings.dllFunctions[library].size();
 		if (!funcCount) continue;
 		
-		ImportEntryWrapper* libWr = _autoAddLibrary(library, funcCount, dllsCount, storageOffset, continueLastOperation);
+		ImportEntryWrapper* libWr = _autoAddLibrary(library, funcCount, dllsCount, storageOffset, settings.separateOFT, continueLastOperation);
 		if (libWr == NULL) {
 			throw CustomException("Adding library failed!");
 			return false;
@@ -854,7 +875,14 @@ bool PeHandler::autoAddImports(const ImportsAutoadderSettings &settings)
 			}
 			continueLastOperation = true;
 			const QString funcName = *fItr;
-			_autoFillFunction(libWr, func, funcName, 0, storageOffset);
+
+			if (funcName.startsWith("#")) {
+				QString ordStr = funcName.mid(1); 
+				const int ordinal = ordStr.toInt();
+				_autoFillFunction(libWr, func, "", ordinal, storageOffset);
+			} else {
+				_autoFillFunction(libWr, func, funcName, 0, storageOffset);
+			}
 			delete func; func = NULL; // delete the temporary wrapper
 			libWr->wrap();
 		}
@@ -912,7 +940,8 @@ ImportedFuncWrapper* PeHandler::_addImportFunc(ImportEntryWrapper *lib, bool con
 	
 	if (!isSet) {
 		delete nextFunc; nextFunc = NULL;
-		this->unbackupLastModification();
+		this->unModify();
+		throw CustomException("Failed to add imported function!");
 		return NULL;
 	}
 	return nextFunc;
@@ -921,7 +950,12 @@ ImportedFuncWrapper* PeHandler::_addImportFunc(ImportEntryWrapper *lib, bool con
 bool PeHandler::addImportFunc(size_t libNum)
 {
 	ImportEntryWrapper *lib = dynamic_cast<ImportEntryWrapper*>(importDirWrapper.getEntryAt(libNum));
-	ImportedFuncWrapper* func = _addImportFunc(lib);
+	ImportedFuncWrapper* func = NULL;
+	try {
+		func = _addImportFunc(lib);
+	} catch (CustomException &e) {
+		func = NULL;
+	}
 	if (!func) {
 		return false;
 	}
@@ -997,6 +1031,11 @@ bool PeHandler::substBlock(offset_t offset, uint64_t size, BYTE* buf)
 void PeHandler::backupModification(offset_t modifOffset, bufsize_t modifSize, bool continueLastOperation)
 {
 	modifHndl.backupModification(modifOffset, modifSize, continueLastOperation);
+}
+
+void PeHandler::backupResize(bufsize_t newSize, bool continueLastOperation)
+{
+	modifHndl.backupResize(newSize, continueLastOperation);
 }
 
 void PeHandler::unbackupLastModification()

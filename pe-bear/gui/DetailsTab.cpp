@@ -234,8 +234,8 @@ void DetailsTab::onAddSection()
 
 void DetailsTab::onFitSections()
 {
-	offset_t fileSize = m_PE->getRawSize();
-	offset_t lastRaw = this->m_PE->getLastMapped(Executable::RAW);
+	const offset_t fileSize = m_PE->getRawSize();
+	const offset_t lastRaw = this->m_PE->getLastMapped(Executable::RAW);
 
 	offset_t imageSize = m_PE->getImageSize();
 	offset_t lastRva = this->m_PE->getLastMapped(Executable::RVA);
@@ -255,15 +255,26 @@ void DetailsTab::onFitSections()
 		if (whatToResize.length() > 0) whatToResize +=" and ";
 		whatToResize += "Image";
 	}
-	QString confirmation = "Do you want to resize " + whatToResize  +" to fit?\nFile resizing cannot be undone!\n";
+	QString confirmation = "Do you want to resize " + whatToResize  +" to fit?\n";
 	QMessageBox::StandardButton reply = QMessageBox::question(NULL, "Do you really want to resize?", confirmation + '\n' + info,  QMessageBox::Yes|QMessageBox::No);                     
 	if (reply != QMessageBox::Yes) return;  
 
 	bool fOk = !fileToResize;
 	bool iOk = !imageToResize;
 
-	if (imageToResize) iOk = this->myPeHndl->resizeImage(lastRva);
-	if (fileToResize) fOk = this->myPeHndl->resize(lastRaw);
+	bool continueLastOperation = false;
+	if (imageToResize) {
+		iOk = this->myPeHndl->resizeImage(lastRva);
+		if (iOk) continueLastOperation = true;
+	}
+	if (fileToResize) {
+		try {
+			this->myPeHndl->backupResize(lastRaw, continueLastOperation);
+		} catch (CustomException &e) {
+			std::cerr << "Resize backup fail: " << e.what() << std::endl;
+		}
+		fOk = this->myPeHndl->resize(lastRaw);
+	}
 
 	if (fOk && iOk) {
 		QMessageBox::information(NULL, "Done!", "Resizing succeeded!");
@@ -321,7 +332,7 @@ void DetailsTab::onAutoAddImports()
 		if (!myPeHndl->autoAddImports(settings)) {
 			QMessageBox::critical(this, "Error", "Auto adding imports failed!");
 		}
-	} catch (CustomException e) {
+	} catch (CustomException &e) {
 		QMessageBox::critical(this, "Error", e.what());
 		return;
 	}
@@ -397,13 +408,13 @@ void DetailsTab::setupImportsToolbar()
 
 	QToolBar *toolBar = &dirSplitters[pe::DIR_IMPORT]->toolBar;
 
-	this->addImportLib = new QAction(QString("&Add a library"), this);
+	this->addImportLib = new QAction(QString("Add a &library"), this);
 	connect(addImportLib, SIGNAL(triggered()), this, SLOT(onAddImportLib()) );
 
-	this->addImportFunc = new QAction(QString("&Add a function to the library"), this);
+	this->addImportFunc = new QAction(QString("Add a &function to the library"), this);
 	connect(addImportFunc, SIGNAL(triggered()), this, SLOT(onAddImportFunc()) );
 	
-	this->autoAddImports = new QAction(QString("&Auto add imports"), this);
+	this->autoAddImports = new QAction(QString("Add imports via &wizard"), this);
 	connect(autoAddImports, SIGNAL(triggered()), this, SLOT(onAutoAddImports()) );
 
 	toolBar->addAction(addImportLib);
