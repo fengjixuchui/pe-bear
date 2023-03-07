@@ -52,18 +52,77 @@ public:
 	PeHandler(PEFile *_pe, FileBuffer *_fileBuffer);
 	PEFile* getPe() { return m_PE; }
 
-	bool isPeValid() 
+	bool isPeValid() const
 	{
 		if (!m_PE) return false;
-		if (m_PE->getSectionsCount() == 0) {
-			return false;
-		}
+
 		offset_t lastRva = this->m_PE->getLastMapped(Executable::RVA);
 		if (lastRva != m_PE->getImageSize()) {
 			return false;
 		}
 		// TODO: verify the internals of the PE file
 		return true;
+	}
+	
+	bool isPeAtypical(QStringList *warnings = NULL)
+	{
+		bool isAtypical = false;
+		if (!isPeValid()) {
+			isAtypical = true;
+			if (warnings) (*warnings) << "The executable may not run: the ImageSize size doesn't fit sections";
+		}
+		if (m_PE->getSectionsCount() == 0) {
+			isAtypical = true;
+			if (warnings) (*warnings) << "The PE has no sections";
+		}
+		bool isOk = false;
+		const uint64_t machineID = fileHdrWrapper.getNumValue(FileHdrWrapper::MACHINE, &isOk);
+		if (isOk && machineID == 0) {
+			isAtypical = true;
+			if (warnings) (*warnings) << "The executable won't run: Machine ID not set";
+		}
+		const uint64_t subsys = this->optHdrWrapper.getNumValue(OptHdrWrapper::SUBSYS, &isOk);
+		if (isOk && subsys == 0) {
+			isAtypical = true;
+			if (warnings) (*warnings) << "The executable won't run: Subsystem not set";
+		}
+		const uint64_t optHdrMagic = this->optHdrWrapper.getNumValue(OptHdrWrapper::MAGIC, &isOk);
+		if (isOk && optHdrMagic == 0) {
+			isAtypical = true;
+			if (warnings) (*warnings) << "The executable won't run: OptHdr Magic not set";
+		}
+		const size_t mappedSecCount = m_PE->getSectionsCount(true);
+		// check for unaligned sections:
+		if (mappedSecCount != m_PE->getSectionsCount(false)) {
+			isAtypical = true;
+			if (warnings) (*warnings) << "Not all sections are mapped";
+		}
+		for (size_t i = 0; i < mappedSecCount; i++) {
+			SectionHdrWrapper *sec = m_PE->getSecHdr(i);
+			const offset_t hdrOffset = sec->getContentOffset(Executable::RAW, false);
+			const offset_t mappedOffset = sec->getContentOffset(Executable::RAW, true);
+			if (mappedOffset == INVALID_ADDR) {
+				isAtypical = true;
+				if (warnings) (*warnings) << "The PE may be truncated. Some sections are outside the file scope.";
+				break;
+			}
+			else if (hdrOffset != mappedOffset) {
+				isAtypical = true;
+				if (warnings) (*warnings) << "Contains sections misaligned to FileAlignment";
+				break;
+			}
+		}
+		
+		if (hasDirectory(pe::DIR_COM_DESCRIPTOR)) {
+			uint64_t flags = this->clrDirWrapper.getNumValue(ClrDirWrapper::FLAGS, &isOk);
+			if (isOk) {
+				if ((flags & pe::COMIMAGE_FLAGS_ILONLY) == 0) {
+					isAtypical = true;
+					if (warnings) (*warnings) << "This .NET file may contain native code.";
+				}
+			}
+		}
+		return isAtypical;
 	}
 	
 	bool updateFileModifTime()
@@ -93,7 +152,7 @@ public:
 		return true;
 	}
 
-	bool hasDirectory(pe::dir_entry dirNum);
+	bool hasDirectory(pe::dir_entry dirNum) const;
 
 	QString getCurrentSHA256() { return getCurrentHash(CalcThread::SHA256); }
 	QString getCurrentMd5() { return getCurrentHash(CalcThread::MD5); }
@@ -113,7 +172,7 @@ public:
 	bool isInModifiedArea(offset_t offset);
 
 	/* resize */
-	bool resize(bufsize_t newSize);
+	bool resize(bufsize_t newSize, bool continueLastOperation = false);
 	bool resizeImage(bufsize_t newSize);
 
 	SectionHdrWrapper* addSection(QString name,  bufsize_t rSize, bufsize_t vSize); //throws exception
@@ -162,6 +221,8 @@ public:
 	bool setDisplayedEP();
 	void undoDisplayOffset();
 
+	bool exportDisasm(const QString &path, const offset_t startOff, const size_t previewSize);
+
 	/* File name wrappers */
 	QString getFullName() { return this->m_fileBuffer->getFileName(); }
 
@@ -178,6 +239,7 @@ public:
 		QFileInfo fileInfo(path);
 		return fileInfo.absoluteDir().absolutePath();
 	}
+	
 //--------
 	/* wrappers for PE structures */
 	DosHdrWrapper dosHdrWrapper;

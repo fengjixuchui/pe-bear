@@ -292,10 +292,15 @@ void SectionMenu::createActions()
 	this->loadSelSecAction = new QAction("Substitute the content", this);
 	connect(this->loadSelSecAction, SIGNAL(triggered()), this, SLOT(loadSelectedSection()) );
 
+	QIcon disasmIco(":/icons/disasm.ico");
+	this->dumpDisasmAction = new QAction(disasmIco, "&Export section disassembly as...", this);
+	connect(dumpDisasmAction, SIGNAL(triggered()), this, SLOT(exportSectionDisasm()) );
+
 	addAction(this->dumpSelSecAction);
 	addAction(this->loadSelSecAction);
 	addAction(this->clearSelSecAction);
-	//addAction(this->searchSigAction);
+	addSeparator();
+	addAction(this->dumpDisasmAction);
 }
 
 void SectionMenu::sectionSelected(PeHandler *pe, SectionHdrWrapper *sec)
@@ -332,6 +337,28 @@ void SectionMenu::dumpSelectedSection()
 		return;
 	}
 	QMessageBox::warning(this, "Error", "Dumping section failed!");
+}
+
+void SectionMenu::exportSectionDisasm()
+{
+	if (!peHndl || !selectedSection) return;
+
+	QString outDir = mainSettings.dirDump;
+	if (outDir == "") outDir = peHndl->getDirPath();
+
+	QString defaultPath = outDir + QDir::separator() + peHndl->getShortName() + "[" + selectedSection->mappedName + "].txt";
+	QString path = QFileDialog::getSaveFileName(this, "Save disasembly as...", defaultPath);
+	if (path.size() == 0) return;
+
+	const offset_t startOff = selectedSection->getContentOffset(Executable::RAW, true);
+	const size_t previewSize = selectedSection->getContentSize(Executable::RAW, true);
+	
+	if (!peHndl->exportDisasm(path, startOff, previewSize)) {
+		QMessageBox::warning(this, "Error", "Dumping section failed!");
+		return;
+	}
+	QMessageBox::information(this, "Done!", "Dumped section disasembly: "+ selectedSection->mappedName +"\ninto: " + path);
+	return;
 }
 
 void SectionMenu::clearSelectedSection()

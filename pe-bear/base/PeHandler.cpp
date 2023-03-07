@@ -3,6 +3,7 @@
 
 #include "../base/PeHandlersManager.h"
 #include <bearparser/bearparser.h>
+#include "../disasm/PeDisasm.h"
 
 using namespace sig_ma;
 using namespace pe;
@@ -120,7 +121,7 @@ void PeHandler::associateWrappers()
 	dataDirWrappers[DIR_COM_DESCRIPTOR] = &clrDirWrapper;
 }
 
-bool PeHandler::hasDirectory(dir_entry dirNum)
+bool PeHandler::hasDirectory(dir_entry dirNum) const
 {
 	if (dirNum >= DIR_ENTRIES_COUNT) return false;
 
@@ -211,21 +212,24 @@ bool PeHandler::isPacked()
 PckrSign* PeHandler::findPackerSign(offset_t startAddr, Executable::addr_type aT, match_direction md)
 {
 	if (!signFinder || !m_PE) return NULL;
+
 	BYTE* content = m_PE->getContent();
 	if (!content) return NULL;
-	size_t contentSize = m_PE->getRawSize();
+
+	const size_t contentSize = m_PE->getRawSize();
 
 	offset_t startingRaw = m_PE->toRaw(startAddr, aT);
 	if (startingRaw == INVALID_ADDR) return NULL;
 
 	sig_ma::matched matchedSet = signFinder->getMatching(content, contentSize, startingRaw, md);
-	int foundCount = matchedSet.signs.size();
+	size_t foundCount = matchedSet.signs.size();
 	if (foundCount == 0) return NULL;
 
-	PckrSign* packer = *(matchedSet.signs.begin());
-	if (!packer) foundCount = 0;
-
-	if (foundCount > 0) {
+	PckrSign* packer = NULL;
+	for (auto sItr = matchedSet.signs.begin(); sItr != matchedSet.signs.end(); ++sItr) {
+		packer = *sItr;
+		if (!packer) continue;
+		
 		FoundPacker pckr(startingRaw + matchedSet.match_offset, packer);
 		std::vector<FoundPacker>::iterator itr = std::find(this->packerAtOffset.begin(), this->packerAtOffset.end(), pckr);
 
@@ -457,8 +461,13 @@ bool PeHandler::isInModifiedArea(offset_t offset)
 	return this->modifHndl.isInLastModifiedArea(offset);
 }
 
-bool PeHandler::resize(bufsize_t newSize)
+bool PeHandler::resize(bufsize_t newSize, bool continueLastOperation)
 {
+	try {
+		this->backupResize(newSize, continueLastOperation);
+	} catch (CustomException &e) {
+		std::cerr << "Resize backup fail: " << e.what() << std::endl;
+	}
 	if (m_PE->resize(newSize)) {
 		updatePeOnResized();
 		emit modified();
@@ -475,6 +484,9 @@ bool PeHandler::resizeImage(bufsize_t newSize)
 	bufsize_t modSize = this->optHdrWrapper.getFieldSize(OptHdrWrapper::IMAGE_SIZE);
 	this->modifHndl.backupModification(modOffset, modSize, false);
 	m_PE->setImageSize(newSize);
+
+	updatePeOnResized();
+	emit modified();
 	return true;
 }
 
@@ -500,12 +512,12 @@ SectionHdrWrapper* PeHandler::addSection(QString name, bufsize_t rSize, bufsize_
 		this->modifHndl.backupResize(newSize, true);
 		
 		newSec = m_PE->addNewSection(name, rSize, vSize);
-	} catch (CustomException e) {
+	} catch (CustomException &e) {
 		this->modifHndl.unStoreLast();
-		throw (e);
+		throw (e); // rethrow the exception to exit from the function
 	}
 
-	if (!newSec) {
+	if (!newSec) { // in case if adding section has failed, but not because of an exception thrown
 		this->modifHndl.unStoreLast();
 		throw CustomException("Cannot add new section!");
 	}
@@ -1184,5 +1196,63 @@ bool PeHandler::markedBranching(offset_t cRva, offset_t tRva)
 	markedOrigin = tRva;
 
 	emit marked();
+	return true;
+}
+
+bool PeHandler::exportDisasm(const QString &path, const offset_t startOff, const size_t previewSize)
+{
+	PEFile *pe = this->getPe();
+	if (!pe) return false;
+	
+	if (!pe->getContentAt(startOff, previewSize)) {
+		return false;
+	}
+	
+	QFile fOut(path);
+	if (fOut.open(QFile::WriteOnly | QFile::Text) == false) {
+		return false;
+	}
+	
+	pe_bear::PeDisasm myDisasm(pe, previewSize);
+	myDisasm.init(startOff, pe->getBitMode());
+	myDisasm.fillTable();
+
+	QTextStream disasmStream(&fOut);
+	for (int index = 0; index < myDisasm.chunksCount(); ++index ) {
+		QString str = myDisasm.mnemStr(index);
+		if (myDisasm.isBranching(index)) {
+			str = myDisasm.translateBranching(index);
+		}
+
+		//resolve target functions:
+		bool isOk = false;
+		const offset_t tRva =  myDisasm.getTargetRVA(index, isOk);
+		QString funcName = "";
+		QString refStr = "";
+		if (isOk) {
+			funcName = importDirWrapper.thunkToFuncName(tRva, false);
+			if (funcName.length() == 0 ) {
+				funcName = delayImpDirWrapper.thunkToFuncName(tRva, false);
+			}
+			refStr = myDisasm.getStringAt(tRva);
+		}
+		
+		offset_t VA = pe->rvaToVa(myDisasm.getRvaAt(index));
+		QString vaStr = QString::number(VA, 16);
+		
+		// stream to the file:
+		disasmStream << vaStr << " : " <<  str;
+		if (funcName.length()) {
+			disasmStream << " : " <<  funcName;
+		}
+		else if (refStr.length()) {
+			disasmStream << " : " <<  refStr;
+		}
+		disasmStream << "\n";
+		if (myDisasm.isBranching(index)) {
+			disasmStream << "\n"; // add a separator line
+		}
+	}
+	fOut.close();
 	return true;
 }

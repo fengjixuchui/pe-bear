@@ -28,15 +28,14 @@ QVariant SignaturesBrowseModel::headerData(int section, Qt::Orientation orientat
 Qt::ItemFlags SignaturesBrowseModel::flags(const QModelIndex &index) const
 {	
 	if (!index.isValid()) return Qt::NoItemFlags;
-	Qt::ItemFlags fl = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+	const Qt::ItemFlags fl = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
 	return fl;
 }
 
 int SignaturesBrowseModel::rowCount(const QModelIndex &parent) const 
 {
 	if (!signs) return 0;
-	size_t sigCount = this->signs->signaturesVec().size();
-	return sigCount;
+	return this->signs->signaturesVec().size();
 }
 
 QVariant SignaturesBrowseModel::data(const QModelIndex &index, int role) const
@@ -59,7 +58,7 @@ QVariant SignaturesBrowseModel::data(const QModelIndex &index, int role) const
 		case COL_NAME : 
 			return QString::fromStdString(sign->getName());
 		case COL_SIZE: 
-			return  (qulonglong)sign->length();
+			return (qulonglong)sign->length();
 		case COL_PREVIEW:
 			return QString::fromStdString(sign->getContent());
 	}
@@ -74,15 +73,42 @@ SignaturesBrowseWindow::SignaturesBrowseWindow(sig_ma::SigFinder* vSign, QWidget
 	if (vSign == NULL) return;
 	this->vSign = vSign;
 	//---
-	SignaturesBrowseModel *sigModel = new SignaturesBrowseModel(vSign, this);
-	signsTree.setModel(sigModel);
+	this->sigModel = new SignaturesBrowseModel(vSign, this);
+	this->proxyModel = new SigSortFilterProxyModel(this);
+
+	proxyModel->setSourceModel( sigModel );
+	signsTree.setModel( proxyModel ); 
+	signsTree.setSortingEnabled(true);
+
 	signsTree.setItemsExpandable(false);
 	signsTree.setRootIsDecorated(false);
-	setCentralWidget(&signsTree);
+
+	filterLabel.setText("Search in columns:");
+	topLayout.addWidget(&filterLabel);
+	topLayout.addWidget(&filterEdit);
+
+	topLayout.addWidget(&signsTree);
+	topLayout.addWidget(&sigInfo);
+	
+	QWidget *widget = new QWidget(this);
+	widget->setLayout(&topLayout);
+	setCentralWidget(widget);
 	//---
 	createMenu();
-	connect(sigModel, SIGNAL(modelUpdated()), &signsTree, SLOT(reset()));
+	connect(this->sigModel, SIGNAL(modelUpdated()), this, SLOT(onSigListUpdated()));
 	connect(this, SIGNAL(signaturesUpdated()), sigModel, SLOT(onNeedReset()));
+
+	connect(&filterEdit, SIGNAL(textChanged(QString)), this, SLOT(onFilterChanged(QString)) );
+	
+	this->onSigListUpdated();
+}
+
+void SignaturesBrowseWindow::onFilterChanged(QString str)
+{
+	if (!proxyModel) return;
+	
+	QRegExp regExp(str.toLower(), Qt::CaseSensitive, QRegExp::FixedString);
+	proxyModel->setFilterRegExp(regExp);
 }
 
 void SignaturesBrowseWindow::createMenu()
@@ -91,6 +117,18 @@ void SignaturesBrowseWindow::createMenu()
 	QAction* loadAction = new QAction("Load", fileSubmenu);
 	connect(loadAction, SIGNAL(triggered()), this, SLOT(openSignatures()));
 	fileSubmenu->addAction(loadAction);
+}
+
+void SignaturesBrowseWindow::onSigListUpdated()
+{
+	sigModel->reset();
+	signsTree.reset();
+	
+	int sigCount = 0;
+	if (vSign) {
+		sigCount = vSign->signaturesVec().size();
+	}
+	sigInfo.setText("Total signatures: " + QString::number(sigCount, 10));
 }
 
 void SignaturesBrowseWindow::openSignatures()
@@ -107,5 +145,6 @@ void SignaturesBrowseWindow::openSignatures()
 		msgBox.setText("Added new signatures: " + QString::number(i));
 		msgBox.exec();
 	}
+
 	//todo: emit -> signatures loaded
 }
